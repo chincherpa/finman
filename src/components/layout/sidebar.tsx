@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  ArrowDownUp, CircleHelp, HandCoins, Landmark, PieChart, ReceiptText, Settings, TrendingUp, Wallet,
+  ArrowDownUp, CircleHelp, HandCoins, Landmark, PieChart, ReceiptText, Settings, Shuffle, TrendingUp, Wallet,
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -15,6 +15,7 @@ const items = [
   { href: "/accounts", label: "Konten", icon: Landmark },
   { href: "/loans", label: "Kredite", icon: HandCoins },
   { href: "/uncategorized", label: "Zu prüfen", icon: CircleHelp, badge: "uncategorized" },
+  { href: "/mappings", label: "Zuordnungen", icon: Shuffle },
 ] as const;
 
 export function Sidebar({ review, uncategorized }: { review: number; uncategorized: number }) {

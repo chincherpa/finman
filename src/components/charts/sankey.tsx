@@ -1,6 +1,7 @@
 "use client";
 
 import ReactECharts from "echarts-for-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { formatEur } from "@/lib/format";
 
 export interface SankeyNode {
@@ -16,7 +17,25 @@ export interface SankeyLink {
   value: number; // cents
 }
 
-export function Sankey({ nodes, links, height = 460 }: { nodes: SankeyNode[]; links: SankeyLink[]; height?: number }) {
+export function Sankey({ nodes, links, height = 460, selected }: { nodes: SankeyNode[]; links: SankeyLink[]; height?: number; selected?: string }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  const select = (name: string) => {
+    const next = new URLSearchParams(params.toString());
+    if (name === selected) next.delete("sel");
+    else next.set("sel", name);
+    const qs = next.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+  const onEvents = {
+    click: (p: { dataType: string; data: { name?: string; source?: string; target?: string } }) => {
+      if (p.dataType === "node") select(p.data.name!);
+      else if (p.dataType === "edge") select(p.data.target === "in" ? p.data.source! : p.data.target!);
+    },
+  };
+
   // Node value = max(in, out)
   const inSum = new Map<string, number>();
   const outSum = new Map<string, number>();
@@ -63,5 +82,5 @@ export function Sankey({ nodes, links, height = 460 }: { nodes: SankeyNode[]; li
     ],
   };
 
-  return <ReactECharts option={option} style={{ height }} notMerge lazyUpdate />;
+  return <ReactECharts option={option} style={{ height, cursor: "pointer" }} onEvents={onEvents} notMerge lazyUpdate />;
 }

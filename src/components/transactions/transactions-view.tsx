@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { BarChart3, Clock, EyeOff, Filter, Plus, Search, Split as SplitIcon } from "lucide-react";
+import { BarChart3, Clock, EyeOff, Filter, Search, Split as SplitIcon } from "lucide-react";
 import clsx from "clsx";
 import type { Account, Category } from "@/db/schema";
 import type { TxRow, TxTab } from "@/lib/queries";
 import { formatDate, formatEur } from "@/lib/format";
 import { bulkUpdate } from "@/app/actions";
 import { TxEditor } from "./tx-editor";
-import { AddTransaction } from "./add-transaction";
 import { CategoryInput } from "./category-input";
 import { PayeeAvatar } from "./payee-avatar";
 import { PayeeHistory } from "./payee-history";
@@ -42,7 +41,6 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
   const [openId, setOpenId] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
-  const [adding, setAdding] = useState(false);
   const [historyPayee, setHistoryPayee] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -113,7 +111,6 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
-          <button className="btn" onClick={() => setAdding(true)}><Plus size={14} /> Umsatz</button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className={clsx("seg", lockTab && "hidden")}>
@@ -231,7 +228,6 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
           onPrev={openIndex > 0 ? () => setOpenId(result.rows[openIndex - 1].id) : undefined}
         />
       )}
-      {adding && <AddTransaction accounts={accounts} categories={categories} payees={payees} onClose={() => setAdding(false)} />}
       {historyPayee && <PayeeHistory payee={historyPayee} onClose={() => setHistoryPayee(null)} />}
     </div>
   );

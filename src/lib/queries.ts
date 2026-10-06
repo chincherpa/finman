@@ -73,7 +73,7 @@ export function getLines(range: { from: string; to: string }, accountId?: number
       let kind: LineKind = "expense";
       if (e.kat0 === INCOME_GROUP) kind = "income";
       else if (e.kat0 === SAVINGS_GROUP) kind = "savings";
-      else if (e.kat0 === UNCATEGORIZED && p.amountCents > 0) kind = "income";
+      else if (p.amountCents > 0) kind = "income";
       out.push({
         txId: t.id, date: t.bookingDate, month: t.bookingDate.slice(0, 7), amountCents: p.amountCents,
         payee: t.payee ?? (t.rawName || t.bookingType), category: p.category, ...e, kind,

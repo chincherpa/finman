@@ -98,7 +98,8 @@ export function parseBankCsv(input: Buffer | string): ParsedRow[] {
       balanceCents = parseGermanAmount(saldo[1]) * (saldo[2] === "S" ? -1 : 1);
       if (amountCents === 0) kind = "skip";
     } else if (bookingType === "Kartenzahlung/-en") {
-      kind = "pending";
+      // Not-yet-booked card reservations: ignore, the booked version arrives in a later export.
+      kind = "skip";
     }
 
     const parsed: Omit<ParsedRow, "hash"> = {
@@ -109,7 +110,7 @@ export function parseBankCsv(input: Buffer | string): ParsedRow[] {
       valueDate: parseGermanDate(pick(row, "Wertstellung")),
       amountCents,
       bookingType,
-      rawName: kind === "pending" ? "" : rawName,
+      rawName,
       iban: pick(row, "Empfänger/Auftraggeber IBAN"),
       bic: pick(row, "Empfänger/Auftraggeber BIC"),
       creditorId: pick(row, "Glaeubiger-ID"),

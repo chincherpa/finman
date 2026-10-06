@@ -22,7 +22,7 @@ type SplitDraft = { amount: string; category: string; comment: string };
 const toInput = (cents: number) => (Math.abs(cents) / 100).toFixed(2).replace(".", ",");
 
 export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Props) {
-  const [payee, setPayee] = useState(tx.payee ?? "");
+  const [payee, setPayee] = useState(tx.payee ?? tx.rawName ?? "");
   const [category, setCategory] = useState(tx.category ?? "");
   const [comment, setComment] = useState(tx.comment);
   const [hidden, setHidden] = useState(tx.hidden);

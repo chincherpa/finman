@@ -37,7 +37,7 @@ describe("parsing", () => {
   it("decodes Latin-1 sample and classifies rows", () => {
     const rows = parseBankCsv(sample);
     expect(rows).toHaveLength(166);
-    expect(rows.filter((r) => r.kind === "pending")).toHaveLength(3);
+    expect(rows.filter((r) => r.bookingType === "Kartenzahlung/-en" && r.kind === "skip")).toHaveLength(3);
     expect(rows.some((r) => r.bookingType === "Gutschrift Überw.")).toBe(true);
     const saldo = rows.find((r) => r.balanceCents != null)!;
     expect(saldo.balanceCents).toBe(498909);
@@ -59,7 +59,7 @@ describe("import", () => {
   it("imports sample, resolves known payees and dedupes on re-import", () => {
     const s1 = importBankCsv(db, sampleFile, sample);
     expect(s1.inserted).toBeGreaterThan(150);
-    expect(s1.pending).toBe(3);
+    expect(s1.pending).toBe(0);
     expect(db.select().from(balanceSnapshots).all()).toHaveLength(1);
 
     const edeka = db.select().from(transactions).where(eq(transactions.rawName, "EDEKA WECKERT//STUTTGART/DE")).all();
@@ -72,16 +72,11 @@ describe("import", () => {
     expect(s2.duplicates).toBe(s1.inserted);
   });
 
-  it("replaces pending card payment by booked one", () => {
+  it("ignores pending card payments", () => {
     const pending = `${HEADER}\n1;05.01.2026 14:44;05.01.2026;;-14,65;;Kartenzahlung/-en;Kartenzahlung/-en;;;;;;EC 79982677 050126144447 04;;\n`;
-    expect(importBankCsv(db, "a.csv", pending).pending).toBe(1);
-    const booked = `${HEADER}\n1;07.01.2026 09:36;07.01.2026;07.01.2026;-14,65;20080;Debitkartenzahlung;BAECKEREI U KONDITOREI TREI 28 GIR 79982677//STUTTGART/DE;DE1;BIC;;;;2026-01-05T14:44 Debit;;E2E\n`;
-    const s = importBankCsv(db, "b.csv", booked);
-    expect(s.replacedPending).toBe(1);
-    const all = db.select().from(transactions).all();
-    expect(all).toHaveLength(1);
-    expect(all[0].status).toBe("booked");
-    expect(all[0].payee).toBe("Bäckerei");
+    const s = importBankCsv(db, "a.csv", pending);
+    expect(s.inserted).toBe(0);
+    expect(db.select().from(transactions).all()).toHaveLength(0);
   });
 
   it("applies rules and flags unknown payees", () => {

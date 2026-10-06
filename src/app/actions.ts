@@ -181,23 +181,6 @@ export async function getPayeeHistory(payee: string): Promise<ActionResult<{ mon
   }
 }
 
-export async function addTransaction(input: { accountId: number; date: string; amount: string; payee: string; category: string; comment: string }): Promise<ActionResult> {
-  try {
-    const amountCents = cents(input.amount);
-    if (!amountCents) throw new Error("Betrag fehlt.");
-    db.insert(transactions).values({
-      accountId: input.accountId, bookedAt: `${input.date}T12:00`, bookingDate: input.date, valueDate: input.date,
-      amountCents, bookingType: "Manuell", rawName: input.payee, payee: input.payee || null,
-      category: input.category || null, comment: input.comment, hash: `manual-${crypto.randomUUID()}`,
-      needsReview: !(input.payee && input.category), resolvedBy: "manual",
-    }).run();
-    refresh();
-    return { ok: true };
-  } catch (e) {
-    return fail(e);
-  }
-}
-
 export async function deleteTransaction(id: number): Promise<ActionResult> {
   const t = db.select().from(transactions).where(eq(transactions.id, id)).get();
   if (t?.bookingType !== "Manuell" && t?.status !== "pending") return { ok: false, error: "Nur manuelle oder vorgemerkte Umsätze können gelöscht werden." };
