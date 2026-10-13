@@ -161,6 +161,7 @@ export interface TxRow extends Transaction {
   splits: Split[];
   kat0: string | null;
   kat1: string | null;
+  kat2: string | null;
   accountName: string;
 }
 
@@ -234,7 +235,7 @@ export function listTransactions(f: TxFilter): { rows: TxRow[]; total: number; i
     ...agg,
     rows: rows.map(({ t, accountName }) => {
       const c = t.category ? cats.get(normalizeKey(t.category)) : undefined;
-      return { ...t, accountName, splits: byTx.get(t.id) ?? [], kat0: c?.kat0 ?? null, kat1: c?.kat1 ?? null };
+      return { ...t, accountName, splits: byTx.get(t.id) ?? [], kat0: c?.kat0 ?? null, kat1: c?.kat1 ?? null, kat2: c?.kat2 ?? null };
     }),
   };
 }

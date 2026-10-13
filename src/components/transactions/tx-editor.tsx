@@ -5,8 +5,9 @@ import { ChevronDown, ChevronUp, Trash2, X } from "lucide-react";
 import type { Category, Rule } from "@/db/schema";
 import type { TxRow } from "@/lib/queries";
 import { formatDate, formatEur } from "@/lib/format";
-import { deleteTransaction, setSplits, updateTransaction } from "@/app/actions";
-import { CategoryInput } from "./category-input";
+import { deleteTransaction, updateTransaction } from "@/app/actions";
+import { CategorySelect } from "./category-select";
+import { PayeeInput } from "./payee-input";
 
 interface Props {
   tx: TxRow;
@@ -16,10 +17,6 @@ interface Props {
   onNext?: () => void;
   onPrev?: () => void;
 }
-
-type SplitDraft = { amount: string; category: string; comment: string };
-
-const toInput = (cents: number) => (Math.abs(cents) / 100).toFixed(2).replace(".", ",");
 
 export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Props) {
   const [payee, setPayee] = useState(tx.payee ?? tx.rawName ?? "");
@@ -32,9 +29,6 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
   const [rule, setRule] = useState<{ field: Rule["field"]; op: Rule["op"]; value: string; setCategory: boolean }>({
     field: tx.rawName ? "purpose" : "raw_name", op: "contains", value: "", setCategory: true,
   });
-  const [splits, setSplitDrafts] = useState<SplitDraft[]>(
-    tx.splits.map((s) => ({ amount: toInput(s.amountCents), category: s.category ?? "", comment: s.comment })),
-  );
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -47,20 +41,13 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const splitSum = splits.reduce((a, s) => a + Math.round(Number(s.amount.replace(/\./g, "").replace(",", ".")) * 100 || 0), 0);
-  const splitRest = Math.abs(tx.amountCents) - splitSum;
-
   const save = (andNext: boolean) => start(async () => {
     setError(null);
     const r = await updateTransaction({
-      id: tx.id, payee: payee || null, category: splits.length ? null : category || null, comment, hidden, isTransfer,
+      id: tx.id, payee: payee || null, category: category || null, comment, hidden, isTransfer,
       saveMapping, rule: ruleOn ? rule : null,
     });
     if (!r.ok) return setError(r.error);
-    if (splits.length || tx.splits.length) {
-      const s = await setSplits(tx.id, splits);
-      if (!s.ok) return setError(s.error);
-    }
     if (r.data?.reResolved) setInfo(`${r.data.reResolved} weitere Umsätze automatisch zugeordnet.`);
     if (andNext && onNext) onNext();
     else if (!r.data?.reResolved) onClose();
@@ -88,20 +75,17 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
         </div>
 
         <form className="flex flex-col gap-4 px-5 py-4" onSubmit={(e) => { e.preventDefault(); save(true); }}>
-          <label className="label">
+          <div className="label">
             Empfänger
-            <input className="input mt-1" list="payee-list" value={payee} onChange={(e) => setPayee(e.target.value)} autoFocus />
-            <datalist id="payee-list">{payees.map((p) => <option key={p} value={p} />)}</datalist>
-          </label>
+            <PayeeInput payees={payees} value={payee} onChange={setPayee} />
+          </div>
 
-          {splits.length === 0 && (
-            <div className="label">
+          <div className="label">
               Kategorie
               <div className="mt-1">
-                <CategoryInput categories={categories} value={category} onChange={setCategory} suggestFor={payee} />
+                <CategorySelect categories={categories} value={category} onChange={setCategory} />
               </div>
-            </div>
-          )}
+          </div>
 
           <label className="label">
             Kommentar
@@ -112,34 +96,6 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
             <label className="flex items-center gap-2"><input type="checkbox" checked={isTransfer} onChange={(e) => setTransfer(e.target.checked)} /> Umbuchung (nicht in Auswertung)</label>
             <label className="flex items-center gap-2"><input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> Ausblenden</label>
           </div>
-
-          {/* Splits */}
-          <section className="rounded-lg border border-border p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[13px] font-medium">Aufteilen</span>
-              <button type="button" className="text-xs text-accent" onClick={() => setSplitDrafts((s) => [
-                ...s, { amount: s.length === 0 ? toInput(tx.amountCents) : toInput(Math.max(splitRest, 0)), category: s.length === 0 ? category : "", comment: "" },
-              ])}>+ Teil</button>
-            </div>
-            {splits.map((s, i) => (
-              <div key={i} className="mt-2 grid grid-cols-[90px_1fr_24px] items-start gap-2">
-                <input className="input num text-right" value={s.amount}
-                  onChange={(e) => setSplitDrafts((all) => all.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
-                <div className="flex flex-col gap-1">
-                  <CategoryInput categories={categories} value={s.category} suggestFor={payee}
-                    onChange={(v) => setSplitDrafts((all) => all.map((x, j) => (j === i ? { ...x, category: v } : x)))} />
-                  <input className="input" placeholder="Kommentar" value={s.comment}
-                    onChange={(e) => setSplitDrafts((all) => all.map((x, j) => (j === i ? { ...x, comment: e.target.value } : x)))} />
-                </div>
-                <button type="button" className="mt-2 text-muted" onClick={() => setSplitDrafts((all) => all.filter((_, j) => j !== i))}>×</button>
-              </div>
-            ))}
-            {splits.length > 0 && (
-              <p className={`num mt-2 text-xs ${splitRest === 0 ? "text-muted" : "text-negative"}`}>
-                Rest: {formatEur(splitRest)}
-              </p>
-            )}
-          </section>
 
           {/* Learning */}
           <section className="flex flex-col gap-2 rounded-lg border border-border p-3 text-[13px]">

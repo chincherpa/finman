@@ -32,8 +32,9 @@ if [ -s "$NVM_DIR/nvm.sh" ]; then
   HAS_NVM=1
 fi
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-mkdir -p "$HOME/.local/bin"
-export PATH="$HOME/.local/bin:$PNPM_HOME:$PATH"
+mkdir -p "$HOME/.local/bin" "$PNPM_HOME/bin"
+# pnpm >= 10/11 legt globale Binaries in $PNPM_HOME/bin ab und verlangt es im PATH
+export PATH="$HOME/.local/bin:$PNPM_HOME/bin:$PNPM_HOME:$PATH"
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 export NEXT_TELEMETRY_DISABLED=1
 export npm_config_update_notifier=false

@@ -36,6 +36,16 @@ if (-not $RemoteBuild) {
     # Build-Ausgabe ist plattformunabhängig; native Module (better-sqlite3, swc) installiert pnpm auf dem Pi.
     Write-Host "==> Baue lokal (pnpm build -> .next-pi)" -ForegroundColor Cyan
     $env:NEXT_DIST_DIR = ".next-pi"
+    # pnpm-Shim kann kaputt sein (Standalone-Install, global-Ordner fehlt) -> testen, sonst corepack.
+    $pnpmOk = $false
+    if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+        pnpm --version *> $null
+        $pnpmOk = ($LASTEXITCODE -eq 0)
+    }
+    if (-not $pnpmOk) {
+        if (-not (Get-Command corepack -ErrorAction SilentlyContinue)) { throw "pnpm defekt/nicht gefunden und corepack fehlt" }
+        function pnpm { corepack pnpm @args }
+    }
     try { pnpm build } finally { Remove-Item Env:NEXT_DIST_DIR -ErrorAction SilentlyContinue }
     if ($LASTEXITCODE) { throw "Lokaler Build fehlgeschlagen" }
     tar -czf $build -C .next-pi --exclude=./cache .

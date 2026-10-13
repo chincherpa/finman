@@ -207,7 +207,7 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
         </thead>
         <tbody>
           {days.map(([day, rows]) => (
-            <DayGroup key={day} day={day} rows={rows} selected={selected} toggle={toggle} onOpen={setOpenId} />
+            <DayGroup key={day} day={day} rows={rows} selected={selected} toggle={toggle} onOpen={setOpenId} onFilter={setParam} />
           ))}
           {result.rows.length === 0 && (
             <tr><td colSpan={5} className="py-16 text-center text-muted">
@@ -233,8 +233,31 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
   );
 }
 
-function DayGroup({ day, rows, selected, toggle, onOpen }: {
-  day: string; rows: TxRow[]; selected: Set<number>; toggle: (id: number) => void; onOpen: (id: number) => void;
+type FilterPatch = (patch: Record<string, string | null>) => void;
+
+function CategoryPath({ row, onFilter }: { row: TxRow; onFilter: FilterPatch }) {
+  const levels = [row.kat0, row.kat1, row.kat2].filter(Boolean) as string[];
+  if (!levels.length) levels.push(row.category ?? "");
+  const last = levels.length - 1;
+  const apply = (i: number) => {
+    if (i === last) return onFilter({ category: row.category, kat0: null, kat1: null });
+    onFilter({ category: null, kat0: row.kat0, kat1: i >= 1 ? row.kat1 : null });
+  };
+  return (
+    <div className="truncate" title={row.category ?? undefined}>
+      {levels.map((l, i) => (
+        <span key={i}>
+          {i > 0 && " - "}
+          <button type="button" className="hover:text-accent hover:underline"
+            onClick={(e) => { e.stopPropagation(); apply(i); }}>{l}</button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function DayGroup({ day, rows, selected, toggle, onOpen, onFilter }: {
+  day: string; rows: TxRow[]; selected: Set<number>; toggle: (id: number) => void; onOpen: (id: number) => void; onFilter: FilterPatch;
 }) {
   const sum = rows.reduce((a, r) => a + r.amountCents, 0);
   return (
@@ -270,10 +293,7 @@ function DayGroup({ day, rows, selected, toggle, onOpen }: {
                   <span className="truncate">{[...new Set(r.splits.map((s) => s.category ?? "?"))].join(", ")}</span>
                 </span>
               ) : r.category ? (
-                <div>
-                  <div className="truncate">{r.category}</div>
-                  <div className="truncate text-xs text-muted">{r.kat0} · {r.kat1}</div>
-                </div>
+                <CategoryPath row={r} onFilter={onFilter} />
               ) : <span className="text-accent">Unkategorisiert</span>}
           </td>
           <td className="truncate py-2.5 pr-3 text-muted">{r.comment}</td>
