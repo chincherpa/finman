@@ -229,7 +229,7 @@ fi
 
 # --- Autostart ------------------------------------------------------------------
 log "Autostart"
-if systemctl list-unit-files 2>/dev/null | grep -q "^pm2-$USER.service"; then
+if systemctl is-enabled "pm2-$USER.service" >/dev/null 2>&1; then
   skip "systemd-Unit pm2-$USER vorhanden"
 else
   sudo env PATH="$PATH" "$(command -v pm2)" startup systemd -u "$USER" --hp "$HOME"

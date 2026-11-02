@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { ChevronDown, ChevronUp, Trash2, X } from "lucide-react";
 import type { Category, Rule } from "@/db/schema";
 import type { TxRow } from "@/lib/queries";
-import { formatDate, formatEur } from "@/lib/format";
-import { deleteTransaction, updateTransaction } from "@/app/actions";
+import { formatDate, formatEur, normalizeKey } from "@/lib/format";
+import { deleteTransaction, saveCategory, updateTransaction } from "@/app/actions";
 import { CategorySelect } from "./category-select";
+import { NewPayeeDialog, type NewPayeeCategory } from "./new-payee-dialog";
 import { PayeeInput } from "./payee-input";
 
 interface Props {
@@ -32,25 +33,62 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  /** Set while the "new payee" dialog is open; remembers which save button triggered it. */
+  const [askNew, setAskNew] = useState<{ andNext: boolean } | null>(null);
+  const [askError, setAskError] = useState<string | null>(null);
+
+  // Payee → category assignment: categories.name is the payee name.
+  const catByKey = useMemo(() => new Map(categories.filter((c) => c.kat0).map((c) => [c.nameKey, c])), [categories]);
+  const isKnownPayee = (p: string) => {
+    const k = normalizeKey(p);
+    return catByKey.has(k) || categories.some((c) => c.kat0 && c.nameKey.startsWith(`${k} `));
+  };
+  const initialPayee = tx.payee ?? tx.rawName ?? "";
+
+  const changePayee = (p: string) => {
+    setPayee(p);
+    const c = catByKey.get(normalizeKey(p));
+    if (c) setCategory(c.name);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !askNew) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, askNew]);
 
-  const save = (andNext: boolean) => start(async () => {
+  const persist = async (andNext: boolean, cat: string) => {
     setError(null);
     const r = await updateTransaction({
-      id: tx.id, payee: payee || null, category: category || null, comment, hidden, isTransfer,
+      id: tx.id, payee: payee || null, category: cat || null, comment, hidden, isTransfer,
       saveMapping, rule: ruleOn ? rule : null,
     });
     if (!r.ok) return setError(r.error);
     if (r.data?.reResolved) setInfo(`${r.data.reResolved} weitere Umsätze automatisch zugeordnet.`);
     if (andNext && onNext) onNext();
     else if (!r.data?.reResolved) onClose();
+  };
+
+  const save = (andNext: boolean) => {
+    const p = payee.trim();
+    if (p && normalizeKey(p) !== normalizeKey(initialPayee) && !isKnownPayee(p)) {
+      setAskError(null);
+      return setAskNew({ andNext });
+    }
+    start(() => persist(andNext, category));
+  };
+
+  const createPayeeCategory = (c: NewPayeeCategory) => start(async () => {
+    const name = payee.trim();
+    const existing = categories.find((x) => x.nameKey === normalizeKey(name));
+    const r = await saveCategory({ id: existing?.id, name, ...c });
+    if (!r.ok) return setAskError(r.error);
+    const andNext = askNew?.andNext ?? false;
+    setAskNew(null);
+    setCategory(name);
+    await persist(andNext, name);
   });
 
   return (
@@ -77,7 +115,7 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
         <form className="flex flex-col gap-4 px-5 py-4" onSubmit={(e) => { e.preventDefault(); save(true); }}>
           <div className="label">
             Empfänger
-            <PayeeInput payees={payees} value={payee} onChange={setPayee} />
+            <PayeeInput payees={payees} value={payee} onChange={changePayee} />
           </div>
 
           <div className="label">
@@ -157,6 +195,19 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
           <dt className="text-muted">Zugeordnet via</dt><dd>{tx.resolvedBy ?? "–"}</dd>
         </dl>
       </aside>
+
+      {askNew && (
+        <NewPayeeDialog
+          payee={payee.trim()}
+          categories={categories}
+          initial={categories.find((c) => c.name === category)}
+          pending={pending}
+          error={askError}
+          onSave={createPayeeCategory}
+          onSkip={() => { const { andNext } = askNew; setAskNew(null); start(() => persist(andNext, category)); }}
+          onCancel={() => setAskNew(null)}
+        />
+      )}
     </div>
   );
 }
