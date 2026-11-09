@@ -125,6 +125,8 @@ export const balanceSnapshots = sqliteTable(
     date: text("date").notNull(),
     balanceCents: integer("balance_cents").notNull(),
     source: text("source", { enum: ["endsaldo", "manual"] }).notNull().default("manual"),
+    /** Timestamp of the closing-balance row (YYYY-MM-DDTHH:MM); bookings after it on the same day are not in the balance. */
+    asOf: text("as_of"),
   },
   (t) => [uniqueIndex("balance_snapshots_account_date_idx").on(t.accountId, t.date, t.source)],
 );

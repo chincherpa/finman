@@ -43,7 +43,10 @@ export function LoanForm({ loan }: { loan?: Loan }) {
       </label>
       <div className="flex items-center gap-2">
         <button className="btn btn-primary" disabled={pending}>{loan ? "Speichern" : "Anlegen"}</button>
-        {loan && <button type="button" className="btn text-negative" disabled={pending} onClick={() => start(async () => { await deleteLoan(loan.id); })}>Löschen</button>}
+        {loan && <button type="button" className="btn text-negative" disabled={pending} onClick={() => {
+          if (!window.confirm(`Kredit „${loan.name}“ wirklich löschen?`)) return;
+          start(async () => { const r = await deleteLoan(loan.id); if (!r.ok) setMsg(r.error); });
+        }}>Löschen</button>}
         {msg && <span className="text-xs text-muted">{msg}</span>}
       </div>
     </form>

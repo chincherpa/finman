@@ -7,7 +7,7 @@ import * as schema from "./schema";
 
 export type DB = BetterSQLite3Database<typeof schema> & { $client: Database.Database };
 
-const MIGRATIONS = path.join(process.cwd(), "src", "db", "migrations");
+const MIGRATIONS = process.env.MIGRATIONS_DIR ?? path.join(process.cwd(), "src", "db", "migrations");
 
 export function openDb(file: string): DB {
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });

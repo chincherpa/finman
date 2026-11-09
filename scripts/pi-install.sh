@@ -123,6 +123,13 @@ fi
 # --- Code entpacken -------------------------------------------------------------
 log "Code nach $APP_DIR"
 mkdir -p "$APP_DIR" "$STATE_DIR"
+# Sicherheitsnetz: nie in einem fremden Verzeichnis (z. B. ~) aufräumen
+case "$APP_DIR" in
+  ""|"/"|"$HOME"|"$HOME/") die "APP_DIR=$APP_DIR ist als Zielverzeichnis nicht zulässig" ;;
+esac
+if [ -n "$(ls -A "$APP_DIR" 2>/dev/null | grep -v '^\.deploy-state$' || true)" ] && [ ! -f "$APP_DIR/ecosystem.config.cjs" ]; then
+  die "$APP_DIR ist nicht leer und enthält keine finman-Installation – abgebrochen"
+fi
 # alte Quellen entfernen; data/, node_modules/, .next/ und Deploy-Status bleiben erhalten
 find "$APP_DIR" -mindepth 1 -maxdepth 1 \
   ! -name data ! -name node_modules ! -name .next ! -name .deploy-state -exec rm -rf {} +
@@ -154,7 +161,7 @@ if [ -d node_modules ] && [ "$(old deps-hash)" = "$DEPS_HASH" ]; then
   skip "unverändert – pnpm install übersprungen"
 else
   # nur Produktions-Abhängigkeiten: gebaut wird auf dem Windows-Rechner
-  pnpm install --prod --frozen-lockfile || pnpm install --prod
+  pnpm install --prod --frozen-lockfile
   echo "$DEPS_HASH" > "$STATE_DIR/deps-hash"
   echo "    räume pnpm-Store auf"
   pnpm store prune >/dev/null 2>&1 || true
@@ -199,13 +206,16 @@ else
 fi
 
 # --- pm2 ------------------------------------------------------------------------
+if [ -z "${FINMAN_PASSWORD:-}" ] && ! grep -q '^[[:space:]]*FINMAN_PASSWORD=.\+' data/.finman.env 2>/dev/null; then
+  die "Kein Passwort gesetzt. Auf dem Pi anlegen:  printf 'FINMAN_PASSWORD=...\n' > $APP_DIR/data/.finman.env && chmod 600 $APP_DIR/data/.finman.env"
+fi
 log "pm2-App finman (Port $FINMAN_PORT)"
 pm2 list || true
 
 status="$(pm2 jlist 2>/dev/null | "$FINMAN_NODE" -e '
   let s="";try{const a=JSON.parse(require("fs").readFileSync(0,"utf8")).find(p=>p.name==="finman");
   s=a?a.pm2_env.status:""}catch{}; process.stdout.write(s)')"
-cfg_hash="$( { echo "$FINMAN_PORT $FINMAN_NODE"; cat ecosystem.config.cjs; } | sha256sum | cut -d' ' -f1)"
+cfg_hash="$( { echo "$FINMAN_PORT $FINMAN_NODE ${FINMAN_PASSWORD:-}"; cat ecosystem.config.cjs data/.finman.env 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)"
 
 if [ "$status" = "online" ] && [ "$BUILT" -eq 0 ] && [ "$(old cfg-hash)" = "$cfg_hash" ]; then
   skip "läuft bereits mit aktuellem Stand – kein Neustart nötig"

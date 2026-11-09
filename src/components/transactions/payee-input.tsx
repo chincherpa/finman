@@ -37,11 +37,12 @@ function score(query: string, candidate: string) {
 }
 
 export function PayeeInput({
-  payees, value, onChange,
+  payees, value, onChange, placeholder,
 }: {
   payees: string[];
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState(-1);
@@ -72,6 +73,7 @@ export function PayeeInput({
         ref={ref}
         className="input mt-1"
         value={value}
+        placeholder={placeholder}
         autoFocus
         autoComplete="off"
         onFocus={() => setOpen(true)}

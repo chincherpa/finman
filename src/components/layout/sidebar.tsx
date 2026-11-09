@@ -8,17 +8,17 @@ import {
 import clsx from "clsx";
 
 const items = [
-  { href: "/transactions", label: "Umsätze", icon: ReceiptText, badge: "review" },
+  { href: "/transactions", label: "Umsätze", icon: ReceiptText },
   { href: "/cash-flow", label: "Cashflow", icon: ArrowDownUp },
   { href: "/spending", label: "Ausgaben", icon: PieChart },
   { href: "/net-worth", label: "Vermögen", icon: TrendingUp },
   { href: "/accounts", label: "Konten", icon: Landmark },
   { href: "/loans", label: "Kredite", icon: HandCoins },
-  { href: "/uncategorized", label: "Zu prüfen", icon: CircleHelp, badge: "uncategorized" },
+  { href: "/uncategorized", label: "Zu prüfen", icon: CircleHelp, badge: "review" },
   { href: "/mappings", label: "Zuordnungen", icon: Shuffle },
 ] as const;
 
-export function Sidebar({ review, uncategorized }: { review: number; uncategorized: number }) {
+export function Sidebar({ review }: { review: number }) {
   const pathname = usePathname();
   const sp = useSearchParams();
   // Keep the selected period when switching pages.
@@ -28,7 +28,7 @@ export function Sidebar({ review, uncategorized }: { review: number; uncategoriz
     if (v) keep.set(k, v);
   }
   const qs = keep.toString() ? `?${keep}` : "";
-  const badges = { review, uncategorized };
+  const badges = { review };
 
   return (
     <aside className="sticky top-0 flex h-screen w-56 shrink-0 flex-col border-r border-border bg-surface-2 px-3 py-5">

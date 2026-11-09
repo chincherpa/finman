@@ -20,15 +20,10 @@ export interface ImportSummary {
   rowsRead: number;
   inserted: number;
   duplicates: number;
-  replacedPending: number;
-  removedPending: number;
-  pending: number;
   balanceSnapshots: number;
   needsReview: number;
   rows: ImportPreviewRow[];
 }
-
-const DAY = 86_400_000;
 
 /** Thrown to unwind a dry-run import transaction; carries the summary that would have been returned. */
 class DryRunRollback extends Error {
@@ -79,7 +74,7 @@ function toValues(row: ParsedRow, accountId: number, importId: number, ctx: Reso
     purpose: row.purpose,
     e2eId: row.e2eId,
     terminalId: row.terminalId,
-    status: row.kind === "pending" ? ("pending" as const) : ("booked" as const),
+    status: "booked" as const,
     hash: row.hash,
     payee: r.payee,
     category: r.category,
@@ -95,6 +90,9 @@ export function importBankCsv(db: DB, filename: string, input: Buffer | string, 
   if (rows.length === 0) throw new Error("Datei enthält keine Umsätze.");
   const accountNumber = rows[0].accountNumber;
   if (!accountNumber) throw new Error("Spalte 'Kontonummer' fehlt – ist das ein Umsatz-Export?");
+  if (rows.some((r) => r.accountNumber !== accountNumber)) {
+    throw new Error("Datei enthält Umsätze mehrerer Konten – bitte pro Konto exportieren.");
+  }
 
   try {
     return db.transaction((tx) => {
@@ -105,23 +103,26 @@ export function importBankCsv(db: DB, filename: string, input: Buffer | string, 
 
       const s: ImportSummary = {
         importId, accountId, rowsRead: rows.length, inserted: 0, duplicates: 0,
-        replacedPending: 0, removedPending: 0, pending: 0, balanceSnapshots: 0, needsReview: 0, rows: [],
+        balanceSnapshots: 0, needsReview: 0, rows: [],
       };
 
-      const existing = new Set(
-        tx.select({ hash: transactions.hash }).from(transactions)
-          .where(inArray(transactions.hash, rows.map((r) => r.hash))).all().map((r) => r.hash),
-      );
-      const pendingInDb = tx.select().from(transactions)
-        .where(and(eq(transactions.accountId, accountId), eq(transactions.status, "pending"))).all();
-      const consumedPending = new Set<number>();
+      // SQLite limits bind parameters per statement – look up hashes in chunks.
+      const existing = new Set<string>();
+      const hashes = rows.map((r) => r.hash);
+      for (let k = 0; k < hashes.length; k += 500) {
+        for (const r of tx.select({ hash: transactions.hash }).from(transactions)
+          .where(inArray(transactions.hash, hashes.slice(k, k + 500))).all()) existing.add(r.hash);
+      }
 
       for (const row of rows) {
         if (row.kind === "balance" || row.kind === "skip") {
           if (row.balanceCents != null) {
             const res = tx.insert(balanceSnapshots)
-              .values({ accountId, date: row.bookingDate, balanceCents: row.balanceCents, source: "endsaldo" })
-              .onConflictDoNothing().run();
+              .values({ accountId, date: row.bookingDate, balanceCents: row.balanceCents, source: "endsaldo", asOf: row.bookedAt })
+              .onConflictDoUpdate({
+                target: [balanceSnapshots.accountId, balanceSnapshots.date, balanceSnapshots.source],
+                set: { balanceCents: row.balanceCents, asOf: row.bookedAt },
+              }).run();
             s.balanceSnapshots += res.changes;
           }
           if (row.kind === "skip") continue;
@@ -133,46 +134,16 @@ export function importBankCsv(db: DB, filename: string, input: Buffer | string, 
         existing.add(row.hash);
         const values = toValues(row, accountId, importId, ctx);
 
-        // A booked card payment supersedes its earlier pending ("Kartenzahlung/-en") version.
-        if (row.kind !== "pending" && row.terminalId) {
-          const t = Date.parse(row.bookingDate);
-          const match = pendingInDb.find((p) =>
-            !consumedPending.has(p.id) && p.terminalId === row.terminalId && p.amountCents === row.amountCents &&
-            Math.abs(Date.parse(p.bookingDate) - t) <= 7 * DAY);
-          if (match) {
-            consumedPending.add(match.id);
-            const keepManual = match.resolvedBy === "manual";
-            tx.update(transactions).set({
-              ...values,
-              ...(keepManual ? { payee: match.payee, category: match.category, comment: match.comment,
-                needsReview: match.needsReview, isTransfer: match.isTransfer, resolvedBy: match.resolvedBy } : {}),
-            }).where(eq(transactions.id, match.id)).run();
-            s.replacedPending++;
-            continue;
-          }
-        }
-
         tx.insert(transactions).values(values).run();
         s.inserted++;
         s.rows.push({
           bookingDate: row.bookingDate, amountCents: row.amountCents, payee: values.payee,
           rawName: row.rawName, purpose: row.purpose, category: values.category, needsReview: values.needsReview,
         });
-        if (values.status === "pending") s.pending++;
         if (values.needsReview) s.needsReview++;
       }
 
-      // Pending rows inside this export's date range that the bank no longer lists are gone.
-      const dates = rows.map((r) => r.bookingDate).filter(Boolean).sort();
-      const fileHashes = new Set(rows.map((r) => r.hash));
-      const stale = pendingInDb.filter((p) => !consumedPending.has(p.id) && !fileHashes.has(p.hash) &&
-        p.bookingDate >= dates[0] && p.bookingDate <= dates[dates.length - 1]);
-      if (stale.length) {
-        tx.delete(transactions).where(inArray(transactions.id, stale.map((p) => p.id))).run();
-        s.removedPending = stale.length;
-      }
-
-      tx.update(imports).set({ rowsNew: s.inserted, rowsDuplicate: s.duplicates, rowsReplaced: s.replacedPending })
+      tx.update(imports).set({ rowsNew: s.inserted, rowsDuplicate: s.duplicates })
         .where(eq(imports.id, importId)).run();
       if (opts.dryRun) throw new DryRunRollback(s);
       return s;

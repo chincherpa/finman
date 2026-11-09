@@ -15,33 +15,47 @@ export function ImportButton() {
   const [formData, setFormData] = useState<FormData | null>(null);
   const [done, setDone] = useState<Result[] | null>(null);
   const [drag, setDrag] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const upload = (files: FileList | null) => {
     if (!files?.length) return;
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
+    setError(null);
     start(async () => {
-      const r = await previewImportFiles(fd);
-      if (r.ok) {
-        setFormData(fd);
-        setPreview(r.data ?? []);
+      try {
+        const r = await previewImportFiles(fd);
+        if (r.ok) {
+          setFormData(fd);
+          setPreview(r.data ?? []);
+        } else setError(r.error);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Upload fehlgeschlagen.");
       }
     });
   };
 
   const confirm = () => {
     if (!formData) return;
+    setError(null);
     start(async () => {
-      const r = await importFiles(formData);
-      setPreview(null);
-      setFormData(null);
-      if (r.ok) setDone(r.data ?? []);
+      try {
+        const r = await importFiles(formData);
+        if (r.ok) {
+          setPreview(null);
+          setFormData(null);
+          setDone(r.data ?? []);
+        } else setError(r.error);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Import fehlgeschlagen.");
+      }
     });
   };
 
   const cancel = () => {
     setPreview(null);
     setFormData(null);
+    setError(null);
   };
 
   return (
@@ -57,6 +71,14 @@ export function ImportButton() {
       >
         <Upload size={14} /> {pending ? "Importiere…" : "CSV importieren"}
       </button>
+      {error && !preview && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/20" onClick={() => setError(null)}>
+          <div className="card w-[440px] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <p className="mb-3 text-sm text-negative">{error}</p>
+            <button className="btn w-full justify-center" onClick={() => setError(null)}>OK</button>
+          </div>
+        </div>
+      )}
       <input ref={input} type="file" accept=".csv,text/csv" multiple hidden onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
       {preview && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/20" onClick={cancel}>
@@ -75,8 +97,6 @@ export function ImportButton() {
                     <dl className="num mb-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[13px]">
                       <dt className="text-muted">Neu</dt><dd>{r.summary.inserted}</dd>
                       <dt className="text-muted">Schon vorhanden</dt><dd>{r.summary.duplicates}</dd>
-                      <dt className="text-muted">Vormerkungen ersetzt</dt><dd>{r.summary.replacedPending}</dd>
-                      <dt className="text-muted">Vormerkungen entfernt</dt><dd>{r.summary.removedPending}</dd>
                     </dl>
                     {r.summary.rows.length > 0 && (
                       <ul className="num divide-y divide-border rounded border border-border">
@@ -94,6 +114,7 @@ export function ImportButton() {
                 )}
               </div>
             ))}
+            {error && <p className="mb-3 text-[13px] text-negative">{error}</p>}
             <div className="flex gap-2">
               <button className="btn flex-1 justify-center" onClick={cancel} disabled={pending}>Abbrechen</button>
               <button className="btn btn-primary flex-1 justify-center" onClick={confirm} disabled={pending}>
@@ -120,8 +141,6 @@ export function ImportButton() {
                     <dt className="text-muted">Zeilen gelesen</dt><dd>{r.summary.rowsRead}</dd>
                     <dt className="text-muted">Neu</dt><dd>{r.summary.inserted}</dd>
                     <dt className="text-muted">Schon vorhanden</dt><dd>{r.summary.duplicates}</dd>
-                    <dt className="text-muted">Vormerkungen ersetzt</dt><dd>{r.summary.replacedPending}</dd>
-                    <dt className="text-muted">Vormerkungen entfernt</dt><dd>{r.summary.removedPending}</dd>
                     <dt className="text-muted">Kontostände</dt><dd>{r.summary.balanceSnapshots}</dd>
                     <dt className="text-muted">Zu prüfen</dt><dd className="font-semibold text-accent">{r.summary.needsReview}</dd>
                   </dl>

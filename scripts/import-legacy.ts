@@ -1,12 +1,19 @@
 /**
- * Replace all transactions with the full history from tranaktionen.csv
+ * Replace the transactions of ONE account with the full history from tranaktionen.csv
  * (old manual export: Datum;Betrag;Empfaenger;Vwz;Bemerkung;;;).
- * Usage: npm run import:legacy -- tranaktionen.csv
+ *
+ * Usage: pnpm import:legacy tranaktionen.csv [Kontonummer] [--yes]
+ *   - the account number is required when more than one account exists
+ *   - without --yes only the number of rows that would be deleted/imported is printed
+ *
+ * Note: legacy rows carry no end-to-end id and a differently assembled purpose, so their hashes never
+ * equal those of a bank export. Do not import bank exports that overlap the legacy period afterwards,
+ * or those bookings are duplicated.
  */
 import fs from "node:fs";
 import path from "node:path";
 import Papa from "papaparse";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { openDb } from "../src/db/client";
 import { accounts, imports, transactions } from "../src/db/schema";
 import { parseGermanDate, parseGermanDateTime } from "../src/lib/format";
@@ -16,7 +23,10 @@ import { resolve } from "../src/lib/import/resolve";
 
 const root = process.cwd();
 const db = openDb(process.env.DATABASE_FILE ?? path.join(root, "data", "finance.db"));
-const file = process.argv[2] ?? "tranaktionen.csv";
+const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const confirmed = process.argv.includes("--yes");
+const file = args[0] ?? "tranaktionen.csv";
+const accountNumber = args[1];
 
 function parseAmount(value: string): number {
   const s = value.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
@@ -26,8 +36,13 @@ function parseAmount(value: string): number {
   return Math.round(n * 100);
 }
 
-const account = db.select().from(accounts).get();
-if (!account) throw new Error("Kein Konto vorhanden – erst ein Konto anlegen.");
+const allAccounts = db.select().from(accounts).all();
+if (!allAccounts.length) throw new Error("Kein Konto vorhanden – erst ein Konto anlegen.");
+if (!accountNumber && allAccounts.length > 1) {
+  throw new Error(`Mehrere Konten vorhanden – Kontonummer angeben: ${allAccounts.map((a) => a.accountNumber ?? a.name).join(", ")}`);
+}
+const account = accountNumber ? allAccounts.find((a) => a.accountNumber === accountNumber) : allAccounts[0];
+if (!account) throw new Error(`Konto ${accountNumber} nicht gefunden.`);
 
 const text = decodeBankFile(fs.readFileSync(path.join(root, file)));
 const { data } = Papa.parse<Record<string, string>>(text, { header: true, delimiter: ";", skipEmptyLines: true });
@@ -51,9 +66,16 @@ const rows = data.map((row) => {
   };
 }).filter((r) => r.bookingDate);
 
+const existing = db.select().from(transactions).where(eq(transactions.accountId, account.id)).all().length;
+console.log(`Konto "${account.name}": ${existing} vorhandene Buchungen werden gelöscht, ${rows.length} importiert.`);
+if (!confirmed) {
+  console.log("Nichts geändert. Mit --yes ausführen, um den Import durchzuführen.");
+  process.exit(0);
+}
+
 db.transaction((tx) => {
-  tx.delete(transactions).run();
-  tx.delete(imports).run();
+  tx.delete(transactions).where(eq(transactions.accountId, account.id)).run();
+  tx.delete(imports).where(and(eq(imports.accountId, account.id))).run();
 
   const importId = tx.insert(imports).values({ filename: path.basename(file), accountId: account.id }).returning({ id: imports.id }).get().id;
   const ctx = loadResolveContext(db);

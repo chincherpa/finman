@@ -17,8 +17,6 @@ const tabs: Array<{ id: TxTab; label: string }> = [
   { id: "all", label: "Alle" },
   { id: "review", label: "Zu prüfen" },
   { id: "uncategorized", label: "Ohne Kategorie" },
-  { id: "split", label: "Aufgeteilt" },
-  { id: "pending", label: "Vorgemerkt" },
   { id: "hidden", label: "Ausgeblendet" },
 ];
 
@@ -44,11 +42,12 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
   const [historyPayee, setHistoryPayee] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
-  const setParam = (patch: Record<string, string | null>) => {
+  const setParam = (patch: Record<string, string | string[] | null>) => {
     const next = new URLSearchParams(sp.toString());
     for (const [k, v] of Object.entries(patch)) {
-      if (!v) next.delete(k);
-      else next.set(k, v);
+      next.delete(k);
+      if (Array.isArray(v)) for (const x of v) next.append(k, x);
+      else if (v) next.set(k, v);
     }
     router.replace(`${pathname}?${next}`);
   };
@@ -84,16 +83,14 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
   });
 
   const activeFilters = ["category", "kat0", "kat1", "month"].filter((k) => sp.get(k));
-  const includePayees = sp.get("payee")?.split(",").filter(Boolean) ?? [];
-  const excludePayees = sp.get("excludePayee")?.split(",").filter(Boolean) ?? [];
-  const removeFromList = (key: string, value: string) => {
-    const list = (sp.get(key) ?? "").split(",").filter((v) => v && v !== value);
-    setParam({ [key]: list.length ? list.join(",") : null });
-  };
+  const includePayees = sp.getAll("payee").filter(Boolean);
+  const excludePayees = sp.getAll("excludePayee").filter(Boolean);
+  const removeFromList = (key: string, value: string) => setParam({ [key]: sp.getAll(key).filter((v) => v && v !== value) });
   const selectedNames = useMemo(() => {
     const names = new Set<string>();
     for (const r of result.rows) {
-      if (selected.has(r.id) && (r.payee ?? r.rawName)) names.add(r.payee ?? r.rawName);
+      const name = r.payee ?? (r.rawName || r.bookingType);
+      if (selected.has(r.id) && name) names.add(name);
     }
     return [...names];
   }, [result.rows, selected]);
@@ -178,11 +175,11 @@ export function TransactionsView({ result, tab, categories, payees, accounts, gr
             Als Umbuchung
           </button>
           <button className="btn" disabled={!selectedNames.length}
-            onClick={() => setParam({ payee: selectedNames.join(","), excludePayee: null })}>
+            onClick={() => setParam({ payee: selectedNames, excludePayee: null })}>
             <Filter size={14} /> Nur diese zeigen
           </button>
           <button className="btn" disabled={!selectedNames.length}
-            onClick={() => setParam({ excludePayee: [...new Set([...excludePayees, ...selectedNames])].join(","), payee: null })}>
+            onClick={() => setParam({ excludePayee: [...new Set([...excludePayees, ...selectedNames])], payee: null })}>
             <EyeOff size={14} /> Diese ausblenden
           </button>
           <button className="btn" disabled={selectedNames.length !== 1} title={selectedNames.length > 1 ? "Nur für einen Empfänger" : undefined}

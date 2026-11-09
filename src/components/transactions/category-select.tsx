@@ -18,15 +18,15 @@ export function CategorySelect({
   const [k0, setK0] = useState(current?.kat0 ?? "");
   const [k1, setK1] = useState(current ? current.kat1 || NONE : "");
 
+  // Follow the prop only when it names a real category. An empty value is what we emit while the
+  // user is still picking the lower levels – resetting here would undo that selection.
+  // (Parents that want to clear the selects remount this component via `key`.)
   useEffect(() => {
     if (current) {
       setK0(current.kat0);
       setK1(current.kat1 || NONE);
-    } else if (!value) {
-      setK0("");
-      setK1("");
     }
-  }, [current, value]);
+  }, [current]);
 
   const kat0s = useMemo(() => [...new Set(cats.map((c) => c.kat0))].sort((a, b) => a.localeCompare(b, "de")), [cats]);
   const inK0 = useMemo(() => cats.filter((c) => c.kat0 === k0), [cats, k0]);

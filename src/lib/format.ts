@@ -9,9 +9,13 @@ export function parseGermanAmount(value: string): number {
 
 /** "05.01.2026" → "2026-01-05". Returns null for empty input. */
 export function parseGermanDate(value: string): string | null {
-  const m = value.trim().match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  const m = value.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?!\d)/);
   if (!m) return null;
-  return `${m[3]}-${m[2]}-${m[1]}`;
+  const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Number(year), month, 0).getDate()) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /** "05.01.2026 17:58" → "2026-01-05T17:58". */
@@ -40,6 +44,18 @@ export function formatDate(iso: string, style: "long" | "short" = "long"): strin
 export function formatPercent(part: number, total: number): string {
   if (!total) return "0,0 %";
   return `${((part / total) * 100).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+}
+
+/** Parse a user-typed amount to cents: "1.234,50" / "12,5" / "12.50" / "1.234" (thousands) / "-3". */
+export function parseAmountInput(value: string): number {
+  const v = value.replace(/[€\s]/g, "");
+  if (v === "" || v === "-") throw new Error(`Ungültiger Betrag: "${value}"`);
+  let n: number;
+  if (v.includes(",")) n = parseGermanAmount(v);
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(v)) n = Math.round(Number(v.replace(/\./g, "")) * 100); // "1.234" = 1234 €
+  else n = Math.round(Number(v) * 100);
+  if (Number.isNaN(n)) throw new Error(`Ungültiger Betrag: "${value}"`);
+  return n;
 }
 
 /** Lowercase, trim, collapse whitespace – key used for case-insensitive lookups. */

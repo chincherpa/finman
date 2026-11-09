@@ -3,9 +3,12 @@
 import { useMemo, useState, useTransition } from "react";
 import { Download, Pencil, Trash2, Upload } from "lucide-react";
 import type { Category, PayeeMapping, Rule } from "@/db/schema";
+import { parseAmountInput } from "@/lib/format";
 import {
   deleteCategory, deleteMapping, deleteRule, importLookupFile, reResolveAll, saveCategory, saveMapping, saveRule, type RuleInput,
 } from "@/app/actions";
+
+const ROW_LIMIT = 500;
 
 function useFilter<T>(rows: T[], text: (r: T) => string) {
   const [q, setQ] = useState("");
@@ -16,6 +19,12 @@ function useFilter<T>(rows: T[], text: (r: T) => string) {
   return { q, setQ, filtered };
 }
 
+/** Ask before deleting; report a failed action instead of swallowing it. */
+function confirmDelete(what: string, run: () => Promise<{ ok: boolean; error?: string }>, onError: (m: string) => void) {
+  if (!window.confirm(`${what} wirklich löschen?`)) return;
+  void run().then((r) => { if (!r.ok) onError(r.error ?? "Löschen fehlgeschlagen."); });
+}
+
 function Toolbar({ q, setQ, count, total, kind, children }: {
   q: string; setQ: (v: string) => void; count: number; total: number; kind?: "mappings" | "categories"; children?: React.ReactNode;
 }) {
@@ -24,7 +33,7 @@ function Toolbar({ q, setQ, count, total, kind, children }: {
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
       <input className="input max-w-sm" placeholder="Suchen…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <span className="num text-xs text-muted">{count} von {total}</span>
+      <span className="num text-xs text-muted">{count} von {total}{count > ROW_LIMIT && ` (erste ${ROW_LIMIT} angezeigt – bitte filtern)`}</span>
       <div className="ml-auto flex items-center gap-2">
         {msg && <span className="text-xs text-muted">{msg}</span>}
         {kind && (
@@ -88,12 +97,12 @@ export function MappingsTable({ rows }: { rows: PayeeMapping[] }) {
           <th className="px-4 py-2 font-medium">Original (Bank)</th><th className="py-2 font-medium">Empfänger</th><th className="py-2 font-medium">Standard-Kommentar</th><th className="w-20" />
         </tr></thead>
         <tbody>
-          {filtered.slice(0, 500).map((r) => (
+          {filtered.slice(0, ROW_LIMIT).map((r) => (
             <tr key={r.id} className="border-b border-border/70 hover:bg-surface-2/60">
               <td className="px-4 py-1.5">{r.rawName}</td><td className="py-1.5 font-medium">{r.payee}</td><td className="py-1.5 text-muted">{r.defaultComment}</td>
               <td className="pr-3 text-right">
                 <IconBtn onClick={() => setEdit(r)} aria-label="Bearbeiten"><Pencil size={13} /></IconBtn>
-                <IconBtn onClick={() => start(async () => { await deleteMapping(r.id); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
+                <IconBtn onClick={() => start(async () => { confirmDelete(`Zuordnung „${r.rawName}“`, () => deleteMapping(r.id), setErr); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
               </td>
             </tr>
           ))}
@@ -146,14 +155,14 @@ export function CategoriesTable({ rows }: { rows: Category[] }) {
           <th className="py-2 font-medium">Kategorie 2</th><th className="py-2 font-medium">Fix</th><th className="w-20" />
         </tr></thead>
         <tbody>
-          {filtered.slice(0, 600).map((r) => (
+          {filtered.slice(0, ROW_LIMIT).map((r) => (
             <tr key={r.id} className="border-b border-border/70 hover:bg-surface-2/60">
               <td className="px-4 py-1.5 font-medium">{r.name}</td>
               <td className={`py-1.5 ${r.kat0 ? "" : "text-accent"}`}>{r.kat0 || "fehlt"}</td>
               <td className="py-1.5">{r.kat1}</td><td className="py-1.5 text-muted">{r.kat2}</td><td className="py-1.5">{r.fixed ? "ja" : ""}</td>
               <td className="pr-3 text-right">
                 <IconBtn onClick={() => setEdit(r)} aria-label="Bearbeiten"><Pencil size={13} /></IconBtn>
-                <IconBtn onClick={() => start(async () => { await deleteCategory(r.id); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
+                <IconBtn onClick={() => start(async () => { confirmDelete(`Kategorie „${r.name}“`, () => deleteCategory(r.id), setErr); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
               </td>
             </tr>
           ))}
@@ -180,12 +189,27 @@ export function RulesTable({ rows, categories }: { rows: Rule[]; categories: str
   const [edit, setEdit] = useState<RuleInput | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  // Amount inputs keep the raw text; converting on every keystroke eats decimal separators.
+  const [amt, setAmt] = useState({ min: "", max: "" });
   const set = (patch: Partial<RuleInput>) => setEdit((e) => (e ? { ...e, ...patch } : e));
+  const toText = (c: number | null | undefined) => (c != null ? (c / 100).toFixed(2).replace(".", ",") : "");
+  const openEdit = (r: RuleInput) => {
+    setAmt({ min: toText(r.amountMinCents), max: toText(r.amountMaxCents) });
+    setEdit(r);
+  };
 
   const submit = () => start(async () => {
     if (!edit) return;
+    let amountMinCents: number | null;
+    let amountMaxCents: number | null;
+    try {
+      amountMinCents = amt.min.trim() ? parseAmountInput(amt.min) : null;
+      amountMaxCents = amt.max.trim() ? parseAmountInput(amt.max) : null;
+    } catch (e) {
+      return setMsg(e instanceof Error ? e.message : String(e));
+    }
     const r = await saveRule({
-      ...edit,
+      ...edit, amountMinCents, amountMaxCents,
       field2: edit.value2 ? edit.field2 ?? "purpose" : null,
       setPayee: edit.setPayee || null, setCategory: edit.setCategory || null, setComment: edit.setComment || null,
     });
@@ -199,7 +223,7 @@ export function RulesTable({ rows, categories }: { rows: Rule[]; categories: str
     <div className="card overflow-hidden">
       <Toolbar q={q} setQ={setQ} count={filtered.length} total={rows.length}>
         {msg && <span className="text-xs text-muted">{msg}</span>}
-        <button className="btn btn-primary" onClick={() => setEdit({ ...emptyRule })}>+ Regel</button>
+        <button className="btn btn-primary" onClick={() => openEdit({ ...emptyRule })}>+ Regel</button>
       </Toolbar>
       <datalist id="dl-cats">{categories.map((c) => <option key={c} value={c} />)}</datalist>
       {edit && (
@@ -222,10 +246,10 @@ export function RulesTable({ rows, categories }: { rows: Rule[]; categories: str
           ))}
           <div className="grid grid-cols-[30px_1fr_1fr] items-center gap-2">
             <span className="text-xs text-muted">€</span>
-            <input className="input num" placeholder="Betrag ab (optional)" value={edit.amountMinCents != null ? edit.amountMinCents / 100 : ""}
-              onChange={(e) => set({ amountMinCents: e.target.value ? Math.round(Number(e.target.value.replace(",", ".")) * 100) : null })} />
-            <input className="input num" placeholder="Betrag bis (optional)" value={edit.amountMaxCents != null ? edit.amountMaxCents / 100 : ""}
-              onChange={(e) => set({ amountMaxCents: e.target.value ? Math.round(Number(e.target.value.replace(",", ".")) * 100) : null })} />
+            <input className="input num" placeholder="Betrag ab (optional)" value={amt.min}
+              onChange={(e) => setAmt({ ...amt, min: e.target.value })} />
+            <input className="input num" placeholder="Betrag bis (optional)" value={amt.max}
+              onChange={(e) => setAmt({ ...amt, max: e.target.value })} />
           </div>
           <div className="grid grid-cols-[30px_1fr_1fr_1fr] items-center gap-2">
             <span className="text-xs text-muted">dann</span>
@@ -260,8 +284,8 @@ export function RulesTable({ rows, categories }: { rows: Rule[]; categories: str
                   .filter(Boolean).join(" · ")}
               </td>
               <td className="pr-3 text-right">
-                <IconBtn onClick={() => setEdit({ ...r })} aria-label="Bearbeiten"><Pencil size={13} /></IconBtn>
-                <IconBtn onClick={() => start(async () => { await deleteRule(r.id); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
+                <IconBtn onClick={() => openEdit({ ...r })} aria-label="Bearbeiten"><Pencil size={13} /></IconBtn>
+                <IconBtn onClick={() => start(async () => { confirmDelete(`Regel „${r.name || r.value}“`, () => deleteRule(r.id), setMsg); })} aria-label="Löschen"><Trash2 size={13} /></IconBtn>
               </td>
             </tr>
           ))}

@@ -22,7 +22,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}>
         <div className="flex min-h-screen">
           <Suspense fallback={<div className="w-56 shrink-0" />}>
-            <Sidebar review={counts.review} uncategorized={counts.uncategorized} />
+            <Sidebar review={counts.review} />
           </Suspense>
           <main className="min-w-0 flex-1 px-8 py-6">{children}</main>
         </div>

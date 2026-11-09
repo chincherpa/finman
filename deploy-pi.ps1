@@ -54,12 +54,15 @@ if (-not $RemoteBuild) {
 }
 if ($sendDb) {
     Write-Host "==> Packe Datenbank (Erstinstallation)" -ForegroundColor Cyan
-    $running = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
-    if ($running) { Write-Warning "Auf Port 3000 läuft lokal etwas (pnpm dev?). Für eine konsistente DB-Kopie vorher beenden." }
-    $dbFiles = Get-ChildItem data -Filter "finance.db*" | Where-Object { $_.Name -notmatch "\.bak" } |
-        ForEach-Object { "data/$($_.Name)" }
-    tar -czf $data @dbFiles
+    # Konsistente Einzeldatei-Kopie (auch bei laufendem pnpm dev) statt finance.db + -wal + -shm
+    $stage = Join-Path $env:TEMP "finman-dbstage"
+    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path (Join-Path $stage "data") | Out-Null
+    pnpm db:snapshot (Join-Path $stage "data\finance.db")
+    if ($LASTEXITCODE) { throw "DB-Snapshot fehlgeschlagen" }
+    tar -czf $data -C $stage data/finance.db
     if ($LASTEXITCODE) { throw "tar (Datenbank) fehlgeschlagen" }
+    Remove-Item $stage -Recurse -Force
     $files += $data
 } else {
     Write-Host "==> Datenbank wird nicht mitgeschickt (bereits deployt, -WithDb erzwingt es)" -ForegroundColor DarkGray

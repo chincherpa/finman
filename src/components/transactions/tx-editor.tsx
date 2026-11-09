@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Props) {
-  const [payee, setPayee] = useState(tx.payee ?? tx.rawName ?? "");
+  const [payee, setPayee] = useState(tx.payee ?? "");
   const [category, setCategory] = useState(tx.category ?? "");
   const [comment, setComment] = useState(tx.comment);
   const [hidden, setHidden] = useState(tx.hidden);
@@ -43,7 +43,7 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
     const k = normalizeKey(p);
     return catByKey.has(k) || categories.some((c) => c.kat0 && c.nameKey.startsWith(`${k} `));
   };
-  const initialPayee = tx.payee ?? tx.rawName ?? "";
+  const initialPayee = tx.payee ?? "";
 
   const changePayee = (p: string) => {
     setPayee(p);
@@ -115,7 +115,7 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
         <form className="flex flex-col gap-4 px-5 py-4" onSubmit={(e) => { e.preventDefault(); save(true); }}>
           <div className="label">
             Empfänger
-            <PayeeInput payees={payees} value={payee} onChange={changePayee} />
+            <PayeeInput payees={payees} value={payee} onChange={changePayee} placeholder={tx.rawName || undefined} />
           </div>
 
           <div className="label">
@@ -177,9 +177,9 @@ export function TxEditor({ tx, categories, payees, onClose, onNext, onPrev }: Pr
               Speichern{onNext ? " & weiter" : ""}
             </button>
             <button type="button" className="btn" disabled={pending} onClick={() => save(false)}>Speichern</button>
-            {(tx.bookingType === "Manuell" || tx.status === "pending") && (
+            {tx.status === "pending" && (
               <button type="button" className="btn text-negative" disabled={pending} aria-label="Löschen"
-                onClick={() => start(async () => { await deleteTransaction(tx.id); onClose(); })}>
+                onClick={() => start(async () => { const r = await deleteTransaction(tx.id); if (r.ok) onClose(); else setError(r.error); })}>
                 <Trash2 size={14} />
               </button>
             )}

@@ -13,7 +13,7 @@ export interface LookupImportResult {
 }
 
 function parseSemicolon(input: Buffer | string): string[][] {
-  const text = typeof input === "string" ? input.replace(/^﻿/, "") : decodeBankFile(input);
+  const text = typeof input === "string" ? input.replace(/^\uFEFF/, "") : decodeBankFile(input);
   return Papa.parse<string[]>(text, { delimiter: ";", skipEmptyLines: true }).data;
 }
 
@@ -90,6 +90,6 @@ function upsert(
 }
 
 export function toCsv(rows: string[][]): string {
-  const esc = (s: string) => (/[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
-  return "﻿" + rows.map((r) => r.map(esc).join(";")).join("\r\n") + "\r\n";
+  const esc = (s: string) => (/[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  return "\uFEFF" + rows.map((r) => r.map(esc).join(";")).join("\r\n") + "\r\n";
 }

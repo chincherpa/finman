@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import { createHash } from "node:crypto";
 import { parseGermanAmount, parseGermanDate, parseGermanDateTime } from "@/lib/format";
 
-export type RowKind = "normal" | "pending" | "balance" | "skip";
+export type RowKind = "normal" | "balance" | "skip";
 
 export interface ParsedRow {
   kind: RowKind;
@@ -32,7 +32,7 @@ export function decodeBankFile(buf: Buffer): string {
   const hasBom = buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf;
   const utf8 = buf.toString("utf8");
   if (hasBom) text = utf8.slice(1);
-  else if (!utf8.includes("�")) text = utf8;
+  else if (!utf8.includes("\uFFFD")) text = utf8;
   else text = iconv.decode(buf, "latin1");
   return text;
 }
@@ -72,27 +72,31 @@ function pick(row: Raw, ...names: string[]): string {
   return "";
 }
 
+const ENDSALDO = /\s*\*\*Endsaldo\*\*\s*([\d.]+,\d{2})([HS])/;
+
 export function parseBankCsv(input: Buffer | string): ParsedRow[] {
   const text = typeof input === "string" ? input : decodeBankFile(input);
   const { data } = Papa.parse<Raw>(text, { header: true, delimiter: ";", skipEmptyLines: true });
   // Identical rows (same shop, amount and minute) are legit – number them so hashes stay unique.
   const seen = new Map<string, number>();
 
-  return data.map((row) => {
+  return data.map((row, index) => {
     const vwz = Object.keys(row)
       .filter((k) => /^Vwz\.\d+$/.test(k))
       .sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)))
       .map((k) => row[k] ?? "");
-    const purpose = joinPurpose(vwz);
+    const purposeRaw = joinPurpose(vwz);
     const bookingType = pick(row, "Buchungsart");
     const rawName = pick(row, "Empfänger/Auftraggeber Name").replace(/\s+/g, " ");
     const amountCents = parseGermanAmount(pick(row, "Soll/Haben"));
     const bookingDate = parseGermanDate(pick(row, "Buchungstag")) ?? "";
+    const saldo = purposeRaw.match(ENDSALDO);
+    // The marker only appears on the last row of an export; strip it so the hash stays stable.
+    const purpose = saldo ? purposeRaw.replace(ENDSALDO, "").trim() : purposeRaw;
     const bookedAt = parseGermanDateTime(pick(row, "Datum/Zeit")) ?? `${bookingDate}T00:00`;
 
     let kind: RowKind = "normal";
     let balanceCents: number | undefined;
-    const saldo = purpose.match(/\*\*Endsaldo\*\*\s*([\d.]+,\d{2})([HS])/);
     if (saldo) {
       kind = "balance";
       balanceCents = parseGermanAmount(saldo[1]) * (saldo[2] === "S" ? -1 : 1);
@@ -100,6 +104,10 @@ export function parseBankCsv(input: Buffer | string): ParsedRow[] {
     } else if (bookingType === "Kartenzahlung/-en") {
       // Not-yet-booked card reservations: ignore, the booked version arrives in a later export.
       kind = "skip";
+    }
+
+    if (!bookingDate && !(kind === "skip" && balanceCents == null)) {
+      throw new Error(`Zeile ${index + 2}: Ungültiges Buchungsdatum "${pick(row, "Buchungstag")}".`);
     }
 
     const parsed: Omit<ParsedRow, "hash"> = {

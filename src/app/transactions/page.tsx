@@ -2,25 +2,29 @@ import { PageHeader } from "@/components/layout/page-header";
 import { TransactionsView } from "@/components/transactions/transactions-view";
 import { ImportButton } from "@/components/transactions/import-button";
 import { listAccounts, listCategories, listPayees, listTransactions, type TxTab } from "@/lib/queries";
-import { getParam, periodFromParams, type SearchParams } from "@/lib/period";
+import { getParam, getParams, periodFromParams, type SearchParams } from "@/lib/period";
+
+const TABS: TxTab[] = ["all", "review", "uncategorized", "hidden"];
 
 export default async function TransactionsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const period = periodFromParams(sp);
-  const tab = (getParam(sp, "tab") as TxTab) ?? "all";
+  const tabParam = getParam(sp, "tab") as TxTab;
+  const tab: TxTab = TABS.includes(tabParam) ? tabParam : "all";
+  const typeParam = getParam(sp, "type");
   const accountId = Number(getParam(sp, "account")) || undefined;
   const result = listTransactions({
     from: period.from,
     to: period.to,
     q: getParam(sp, "q"),
     tab,
-    type: getParam(sp, "type") as "in" | "out" | undefined,
+    type: typeParam === "in" || typeParam === "out" ? typeParam : undefined,
     accountId,
     kat0: getParam(sp, "kat0"),
     kat1: getParam(sp, "kat1"),
     category: getParam(sp, "category"),
-    payee: getParam(sp, "payee"),
-    excludePayee: getParam(sp, "excludePayee"),
+    payee: getParams(sp, "payee"),
+    excludePayee: getParams(sp, "excludePayee"),
     month: getParam(sp, "month"),
   });
   const categories = listCategories();

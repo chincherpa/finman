@@ -30,25 +30,20 @@ const INCOME_GROUP = "Einnahme";
 const SAVINGS_GROUP = "Sparen";
 const REFUND_GROUP = "Erstattung";
 
-let categoryCache: { at: number; byKey: Map<string, Category> } | null = null;
-
 export function categoryMap(): Map<string, Category> {
-  if (categoryCache && Date.now() - categoryCache.at < 2000) return categoryCache.byKey;
-  const byKey = new Map(db.select().from(categories).all().map((c) => [c.nameKey, c]));
-  categoryCache = { at: Date.now(), byKey };
-  return byKey;
+  return new Map(db.select().from(categories).all().map((c) => [c.nameKey, c]));
 }
 
 /** Refund categories ("Amazon Flora Erstattung") are booked against their base category's group. */
 function effective(categoryName: string | null, cats: Map<string, Category>) {
   const c = categoryName ? cats.get(normalizeKey(categoryName)) : undefined;
-  if (!c || !c.kat0) return { kat0: UNCATEGORIZED, kat1: UNCATEGORIZED, kat2: "", fixed: false };
+  if (!c || !c.kat0) return { kat0: UNCATEGORIZED, kat1: UNCATEGORIZED, kat2: "", fixed: false, refund: false };
   if (c.kat0 === REFUND_GROUP) {
     const base = cats.get(normalizeKey(c.name.replace(/\s+Erstattung$/i, "")));
-    if (base?.kat0) return { kat0: base.kat0, kat1: base.kat1, kat2: base.kat2, fixed: base.fixed };
-    return { kat0: c.kat1.replace(/\s+Erstattung$/i, "") || REFUND_GROUP, kat1: c.kat1, kat2: c.kat2, fixed: false };
+    if (base?.kat0) return { kat0: base.kat0, kat1: base.kat1, kat2: base.kat2, fixed: base.fixed, refund: true };
+    return { kat0: c.kat1.replace(/\s+Erstattung$/i, "") || REFUND_GROUP, kat1: c.kat1, kat2: c.kat2, fixed: false, refund: true };
   }
-  return { kat0: c.kat0, kat1: c.kat1, kat2: c.kat2, fixed: c.fixed };
+  return { kat0: c.kat0, kat1: c.kat1, kat2: c.kat2, fixed: c.fixed, refund: false };
 }
 
 export function getLines(range: { from: string; to: string }, accountId?: number): Line[] {
@@ -69,11 +64,12 @@ export function getLines(range: { from: string; to: string }, accountId?: number
   for (const t of txs) {
     const parts = splitsByTx.get(t.id) ?? [{ amountCents: t.amountCents, category: t.category }];
     for (const p of parts) {
-      const e = effective(p.category, cats);
+      const { refund, ...e } = effective(p.category, cats);
       let kind: LineKind = "expense";
       if (e.kat0 === INCOME_GROUP) kind = "income";
       else if (e.kat0 === SAVINGS_GROUP) kind = "savings";
-      else if (p.amountCents > 0) kind = "income";
+      else if (refund) kind = "expense"; // nets against the base category via sumBy(sign = -1)
+      else if (p.amountCents > 0 && e.kat0 === UNCATEGORIZED) kind = "income";
       out.push({
         txId: t.id, date: t.bookingDate, month: t.bookingDate.slice(0, 7), amountCents: p.amountCents,
         payee: t.payee ?? (t.rawName || t.bookingType), category: p.category, ...e, kind,
@@ -117,7 +113,7 @@ export function monthlyByKey(lines: Line[], range: { from: string; to: string },
 
 /** Monthly net amount for one payee (coalesce(payee, rawName) match), across its full lifetime. */
 export function payeeHistory(payee: string): { months: Array<{ month: string; cents: number; count: number }>; total: number } {
-  const payeeKey = sql`coalesce(${transactions.payee}, ${transactions.rawName})`;
+  const payeeKey = payeeKeySql();
   const rows = db.select().from(transactions)
     .where(and(eq(transactions.hidden, false), eq(transactions.isTransfer, false), sql`${payeeKey} = ${payee}`))
     .all();
@@ -139,7 +135,16 @@ export function payeeHistory(payee: string): { months: Array<{ month: string; ce
 
 // ---------------------------------------------------------------- transactions list
 
-export type TxTab = "all" | "review" | "uncategorized" | "split" | "hidden" | "pending";
+/** Same label as the report lines use: payee, else bank name, else booking type. */
+function payeeKeySql() {
+  return sql`coalesce(${transactions.payee}, nullif(${transactions.rawName}, ''), ${transactions.bookingType})`;
+}
+
+export function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+export type TxTab = "all" | "review" | "uncategorized" | "hidden";
 
 export interface TxFilter {
   from: string;
@@ -151,8 +156,8 @@ export interface TxFilter {
   kat0?: string;
   kat1?: string;
   category?: string;
-  payee?: string;
-  excludePayee?: string;
+  payee?: string[];
+  excludePayee?: string[];
   month?: string;
   limit?: number;
 }
@@ -166,38 +171,38 @@ export interface TxRow extends Transaction {
 }
 
 export function listTransactions(f: TxFilter): { rows: TxRow[]; total: number; inCents: number; outCents: number; review: number } {
-  const conds = [sql`${transactions.bookingDate} between ${f.month ? `${f.month}-01` : f.from} and ${f.month ? `${f.month}-31` : f.to}`];
+  const month = f.month && /^\d{4}-\d{2}$/.test(f.month) ? f.month : undefined;
+  const conds = [sql`${transactions.bookingDate} between ${month ? `${month}-01` : f.from} and ${month ? `${month}-31` : f.to}`];
   const tab = f.tab ?? "all";
   if (tab === "hidden") conds.push(eq(transactions.hidden, true));
   else conds.push(eq(transactions.hidden, false));
   if (tab === "review") conds.push(eq(transactions.needsReview, true));
   if (tab === "uncategorized") conds.push(sql`${transactions.category} is null and not exists (select 1 from splits s where s.transaction_id = ${transactions.id})`);
-  if (tab === "split") conds.push(sql`exists (select 1 from splits s where s.transaction_id = ${transactions.id})`);
-  if (tab === "pending") conds.push(eq(transactions.status, "pending"));
   if (f.type === "in") conds.push(sql`${transactions.amountCents} > 0`);
   if (f.type === "out") conds.push(sql`${transactions.amountCents} < 0`);
   if (f.accountId) conds.push(eq(transactions.accountId, f.accountId));
-  const payeeKey = sql`coalesce(${transactions.payee}, ${transactions.rawName})`;
-  if (f.payee) {
-    const list = f.payee.split(",").filter(Boolean);
-    if (list.length > 1) conds.push(sql`${payeeKey} in ${list}`);
-    else if (list.length === 1) conds.push(sql`${payeeKey} = ${list[0]}`);
-  }
-  if (f.excludePayee) {
-    const list = f.excludePayee.split(",").filter(Boolean);
-    if (list.length) conds.push(sql`${payeeKey} not in ${list}`);
-  }
+  const payeeKey = payeeKeySql();
+  if (f.payee?.length) conds.push(sql`${payeeKey} in ${f.payee}`);
+  if (f.excludePayee?.length) conds.push(sql`${payeeKey} not in ${f.excludePayee}`);
   if (f.category) {
     conds.push(sql`(${transactions.category} = ${f.category} or exists (select 1 from splits s where s.transaction_id = ${transactions.id} and s.category = ${f.category}))`);
   }
   for (const level of ["kat0", "kat1"] as const) {
     const want = f[level];
     if (!want) continue;
+    const cats = categoryMap();
     if (want === UNCATEGORIZED) {
-      conds.push(sql`${transactions.category} is null`);
+      // Same rule as the reports: no category, or a category that is unknown / has no kat0
+      // (applies to splits too).
+      const known = [...cats.values()].filter((c) => c.kat0).map((c) => c.name);
+      const unknown = (col: unknown) => (known.length ? sql`(${col} is null or ${col} not in ${known})` : sql`1`);
+      conds.push(sql`(
+        (not exists (select 1 from splits s where s.transaction_id = ${transactions.id}) and ${unknown(transactions.category)})
+        or exists (select 1 from splits s where s.transaction_id = ${transactions.id} and ${unknown(sql.raw("s.category"))})
+      )`);
+      conds.push(eq(transactions.isTransfer, false));
       continue;
     }
-    const cats = categoryMap();
     const names = [...cats.values()].filter((c) => effective(c.name, cats)[level] === want).map((c) => c.name);
     if (names.length) {
       conds.push(sql`(${transactions.category} in ${names} or exists (select 1 from splits s where s.transaction_id = ${transactions.id} and s.category in ${names}))`);
@@ -206,13 +211,15 @@ export function listTransactions(f: TxFilter): { rows: TxRow[]; total: number; i
   if (f.q?.trim()) {
     const q = f.q.trim();
     const amount = q.replace(/[€\s]/g, "").replace(/\./g, "").replace(",", ".");
-    const like = `%${q}%`;
+    const like = `%${escapeLike(q)}%`;
+    const textMatch = sql`(${transactions.payee} like ${like} escape '\\' or ${transactions.rawName} like ${like} escape '\\'
+      or ${transactions.purpose} like ${like} escape '\\' or ${transactions.comment} like ${like} escape '\\'
+      or ${transactions.category} like ${like} escape '\\')`;
     if (/^-?\d+(\.\d+)?$/.test(amount)) {
       const cents = Math.round(Math.abs(Number(amount)) * 100);
-      conds.push(sql`abs(${transactions.amountCents}) = ${cents}`);
+      conds.push(sql`(abs(${transactions.amountCents}) = ${cents} or ${textMatch})`);
     } else {
-      conds.push(sql`(${transactions.payee} like ${like} or ${transactions.rawName} like ${like} or ${transactions.purpose} like ${like}
-        or ${transactions.comment} like ${like} or ${transactions.category} like ${like})`);
+      conds.push(textMatch);
     }
   }
   const where = and(...conds);
@@ -308,6 +315,12 @@ export function accountBalances(range: { from: string; to: string }): AccountBal
       if (!anchor) return daily.length && account.type !== "asset" && account.type !== "depot"
         ? daily.filter((x) => x.d <= date).reduce((a, x) => a + x.c, 0) : null;
       let bal = anchor.balanceCents;
+      // Bookings of the snapshot day that were made after the closing-balance row are not in it.
+      if (anchor.asOf) {
+        bal += db.select({ c: sql<number>`coalesce(sum(${transactions.amountCents}), 0)` }).from(transactions)
+          .where(and(eq(transactions.accountId, account.id), eq(transactions.bookingDate, anchor.date),
+            sql`${transactions.bookedAt} > ${anchor.asOf}`)).get()!.c;
+      }
       for (const x of daily) {
         if (anchor.date < x.d && x.d <= date) bal += x.c;
         if (date < x.d && x.d <= anchor.date) bal -= x.c;
@@ -335,10 +348,10 @@ export interface LoanStatus {
 
 export function loanStatuses(): LoanStatus[] {
   return listLoans().map((loan) => {
-    const like = `%${loan.matchText}%`;
+    const like = `%${escapeLike(loan.matchText)}%`;
     const payments = db.select().from(transactions).where(and(
       sql`${transactions.bookingDate} >= ${loan.startDate}`,
-      sql`(${transactions.payee} like ${like} or ${transactions.purpose} like ${like} or ${transactions.rawName} like ${like})`,
+      sql`(${transactions.payee} like ${like} escape '\\' or ${transactions.purpose} like ${like} escape '\\' or ${transactions.rawName} like ${like} escape '\\')`,
     )).orderBy(desc(transactions.bookingDate)).all();
     // Liability: our outgoing payments reduce it. Asset (lent money): incoming payments reduce it.
     const paidCents = payments.reduce((a, t) => a + (loan.isLiability ? -t.amountCents : t.amountCents), 0);

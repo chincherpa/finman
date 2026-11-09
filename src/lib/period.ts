@@ -50,12 +50,23 @@ export function getParam(sp: SearchParams, key: string): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+export function getParams(sp: SearchParams, key: string): string[] {
+  const v = sp[key];
+  return (Array.isArray(v) ? v : v ? [v] : []).filter(Boolean);
+}
+
+export const isIsoDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+
+const PRESETS = Object.keys(presetLabels) as Preset[];
+
 export function periodFromParams(sp: SearchParams): Period {
   const from = getParam(sp, "from");
   const to = getParam(sp, "to");
-  if (from && to) return { from, to, preset: (getParam(sp, "p") as Preset) ?? "custom" };
-  const preset = (getParam(sp, "p") as Preset) || "last-12";
-  return { ...presetRange(preset), preset };
+  const p = getParam(sp, "p");
+  const preset = PRESETS.includes(p as Preset) ? (p as Preset) : undefined;
+  if (isIsoDate(from) && isIsoDate(to)) return { from, to, preset: preset ?? "custom" };
+  const effective = preset ?? "last-12";
+  return { ...presetRange(effective), preset: effective };
 }
 
 /** Move the period one step back/forward, keeping its length (month-aligned when possible). */
@@ -69,10 +80,10 @@ export function shiftPeriod(p: Period, dir: -1 | 1): { from: string; to: string 
     const nt = endOfMonth(nf.getFullYear(), nf.getMonth() + months - 1);
     return { from: iso(nf), to: iso(nt) };
   }
-  const days = Math.round((t.getTime() - f.getTime()) / 86_400_000) + 1;
-  const nf = new Date(f.getTime() + dir * days * 86_400_000);
-  const nt = new Date(t.getTime() + dir * days * 86_400_000);
-  return { from: iso(nf), to: iso(nt) };
+  const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  const days = Math.round((Date.UTC(t.getFullYear(), t.getMonth(), t.getDate())
+    - Date.UTC(f.getFullYear(), f.getMonth(), f.getDate())) / 86_400_000) + 1;
+  return { from: iso(addDays(f, dir * days)), to: iso(addDays(t, dir * days)) };
 }
 
 export function monthsInPeriod(p: { from: string; to: string }): string[] {
@@ -93,12 +104,11 @@ export function formatPeriod(p: { from: string; to: string }): string {
 export function withParams(path: string, sp: SearchParams, patch: Record<string, string | null | undefined>): string {
   const next = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) {
-    const val = Array.isArray(v) ? v[0] : v;
-    if (val) next.set(k, val);
+    for (const val of Array.isArray(v) ? v : [v]) if (val) next.append(k, val);
   }
   for (const [k, v] of Object.entries(patch)) {
+    next.delete(k);
     if (v) next.set(k, v);
-    else next.delete(k);
   }
   const qs = next.toString();
   return qs ? `${path}?${qs}` : path;

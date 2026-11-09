@@ -5,5 +5,9 @@ param(
     [string]$Target = "pi@pi.local",
     [switch]$Force
 )
-& (Join-Path $PSScriptRoot "..\deploy-pi-all.ps1") -Only finman @PSBoundParameters
+$all = Join-Path $PSScriptRoot "..\deploy-pi-all.ps1"
+if (-not (Test-Path $all)) {
+    throw "deploy-pi-all.ps1 fehlt (erwartet neben dem Projektordner: $all). Alternativ .\deploy-pi.ps1 verwenden."
+}
+& $all -Only finman @PSBoundParameters
 exit $LASTEXITCODE

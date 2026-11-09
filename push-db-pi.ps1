@@ -13,16 +13,18 @@ Set-Location $PSScriptRoot
 $db = Join-Path $PSScriptRoot "data\finance.db"
 if (-not (Test-Path $db)) { throw "DB nicht gefunden: $db" }
 
-$running = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
-if ($running) { Write-Warning "Auf Port 3000 läuft lokal etwas (pnpm dev?). Für eine konsistente DB-Kopie vorher beenden." }
+# Konsistente Einzeldatei-Kopie (auch bei laufendem pnpm dev), statt finance.db + -wal + -shm zu kopieren
+$snap = Join-Path $PSScriptRoot "data\finance-push.db"
+Write-Host "==> Erzeuge konsistenten Snapshot" -ForegroundColor Cyan
+pnpm db:snapshot $snap
+if ($LASTEXITCODE -or -not (Test-Path $snap)) { throw "Snapshot fehlgeschlagen" }
 
-# finance.db plus evtl. -wal/-shm (ohne .bak)
-$files = Get-ChildItem (Join-Path $PSScriptRoot "data") -Filter "finance.db*" |
-    Where-Object { $_.Name -notmatch "\.bak" } | ForEach-Object { $_.FullName }
-
-Write-Host "==> Kopiere nach ${Target}:/tmp/" -ForegroundColor Cyan
-scp @files "${Target}:/tmp/"
+Write-Host "==> Kopiere nach ${Target}:/tmp/finman-push/" -ForegroundColor Cyan
+ssh $Target "rm -rf /tmp/finman-push && mkdir -p /tmp/finman-push"
+if ($LASTEXITCODE) { throw "ssh fehlgeschlagen" }
+scp $snap "${Target}:/tmp/finman-push/finance.db"
 if ($LASTEXITCODE) { throw "scp fehlgeschlagen" }
+Remove-Item $snap -Force
 
 Write-Host "==> Tausche DB auf dem Pi (Backup der alten als .bak)" -ForegroundColor Cyan
 $remote = @"
@@ -32,7 +34,8 @@ mkdir -p "`$D"
 pm2 stop $App || true
 [ -f "`$D/finance.db" ] && cp "`$D/finance.db" "`$D/finance.db.bak-`$(date +%Y%m%d-%H%M%S)"
 rm -f "`$D"/finance.db "`$D"/finance.db-wal "`$D"/finance.db-shm
-mv /tmp/finance.db* "`$D"/
+mv /tmp/finman-push/finance.db "`$D"/finance.db
+rmdir /tmp/finman-push
 pm2 start $App
 "@
 ssh -t $Target ($remote -replace "`r", "")
